@@ -89,6 +89,7 @@
             font-size: 14px;
             color: #6c757d;
             margin-top: 10px;
+            margin-bottom: 15px;
         }
     </style>
 </head>
@@ -130,18 +131,18 @@
     <!-- 第二張圖：美股對照圖 -->
     <div class="chart-box">
         <div class="chart-title">
-            <span id="usChartTitle">美股對照：TSM (美股納斯達克/紐交所)</span>
+            <span id="usChartTitle">美股對照：TSM (美股/ADR)</span>
         </div>
         <canvas id="usStockChart" height="200"></canvas>
     </div>
 </div>
 
 <script>
-    // 1. 預設台美股對照對應表
+    // 1. 預設台美股對照映射表
     const stockMapping = {
-        '2330': 'TSM', // 台積電 -> 台積電 ADR
-        '2303': 'UMC', // 聯電   -> 聯電 ADR
-        '2408': 'MU'   // 南亞科 -> 美光
+        '2330': 'TSM', // 台積電 -> TSMC ADR
+        '2303': 'UMC', // 聯電   -> UMC ADR
+        '2408': 'MU'   // 南亞科 -> Micron 美光
     };
 
     // 自動依台股代號切換預設美股代號
@@ -152,7 +153,7 @@
         }
     });
 
-    // 預設日期帶入 1 年前
+    // 預設起始日期帶入 1 年前
     const defaultStart = new Date();
     defaultStart.setFullYear(defaultStart.getFullYear() - 1);
     document.getElementById('startDate').value = defaultStart.toISOString().split('T')[0];
@@ -182,7 +183,7 @@
     async function loadAllData() {
         const token = document.getElementById('apiToken').value.trim();
         const twId = document.getElementById('twStockId').value.trim();
-        const usId = document.getElementById('usStockId').value.trim();
+        const usId = document.getElementById('usStockId').value.trim().toUpperCase();
         const startDate = document.getElementById('startDate').value;
         const statusEl = document.getElementById('status');
 
@@ -193,18 +194,43 @@
 
         statusEl.innerText = "資料載入中，請稍候...";
 
-        try {
-            // 2. 平行發送抓取「台股」與「美股」請求
-            const twUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${twId}&start_date=${startDate}&token=${token}`;
-            const usUrl = `https://api.finmindtrade.com/api/v4/data?dataset=USStockPrice&data_id=${usId}&start_date=${startDate}&token=${token}`;
+        // 使用 URLSearchParams 標準化請求參數，防止 URL 格式解析錯誤
+        const twParams = new URLSearchParams({
+            dataset: 'TaiwanStockPrice',
+            data_id: twId,
+            start_date: startDate,
+            token: token
+        });
 
-            const [twRes, usRes] = await Promise.all([
-                fetch(twUrl).then(res => res.json()),
-                fetch(usUrl).then(res => res.json())
-            ]);
+        const usParams = new URLSearchParams({
+            dataset: 'USStockPrice',
+            data_id: usId,
+            start_date: startDate,
+            token: token
+        });
+
+        const twUrl = `https://api.finmindtrade.com/api/v4/data?${twParams.toString()}`;
+        const usUrl = `https://api.finmindtrade.com/api/v4/data?${usParams.toString()}`;
+
+        try {
+            // 平行抓取台股與美股，並各自處理錯誤機制
+            const twPromise = fetch(twUrl).then(res => {
+                if (!res.ok) throw new Error(`台股 API 回傳 HTTP ${res.status}`);
+                return res.json();
+            });
+
+            const usPromise = fetch(usUrl).then(res => {
+                if (!res.ok) throw new Error(`美股 API 回傳 HTTP ${res.status}`);
+                return res.json();
+            }).catch(err => {
+                console.warn("美股資料抓取警告：", err.message);
+                return { data: [] }; // 若美股失敗傳回空陣列，保護整體網頁不崩潰
+            });
+
+            const [twRes, usRes] = await Promise.all([twPromise, usPromise]);
 
             if (!twRes.data || twRes.data.length === 0) {
-                statusEl.innerText = `查無台股 (${twId}) 資料`;
+                statusEl.innerText = `查無台股 (${twId}) 資料，請確認代號或 Token 是否正確。`;
                 return;
             }
 
@@ -212,43 +238,49 @@
             document.getElementById('twChartTitle').innerText = `台股：${twId} 股價與成交量`;
             document.getElementById('usChartTitle').innerText = `美股對照：${usId} 股價走勢`;
 
-            // 3. 處理台股資料
+            // 處理台股資料
             const twDates = twRes.data.map(d => d.date);
             const twCloses = twRes.data.map(d => d.close);
-            const twVolumes = twRes.data.map(d => d.Trading_Volume ? d.Trading_Volume / 1000 : 0); // 轉張數
+            const twVolumes = twRes.data.map(d => d.Trading_Volume ? d.Trading_Volume / 1000 : 0);
 
-            // 4. 處理美股資料並與台股日期時間軸對齊
+            // 處理美股資料（相容大小寫欄位命名 close / Close）
             const usDataMap = {};
-            if (usRes.data) {
+            if (usRes.data && Array.isArray(usRes.data)) {
                 usRes.data.forEach(d => {
-                    // 美股 FinMind 回傳 close 欄位
-                    usDataMap[d.date] = d.Close || d.close;
+                    const price = d.close !== undefined ? d.close : (d.Close !== undefined ? d.Close : null);
+                    if (price !== null) {
+                        usDataMap[d.date] = price;
+                    }
                 });
             }
 
-            // 以台股交易日日期為 X 軸主基準對齊美股股價（若休市則代入前一日值或 null）
+            // 以台股日期為 X 軸基準，強制對齊美股價格
             let lastUsPrice = null;
             const alignedUsCloses = twDates.map(date => {
                 if (usDataMap[date] !== undefined) {
                     lastUsPrice = usDataMap[date];
                     return lastUsPrice;
                 }
-                return lastUsPrice; // 填補無交易日數值，確保連線平滑
+                return lastUsPrice; // 若美股當日休市，沿用前一日數值保持連線平滑
             });
 
-            // 5. 渲染兩張圖表
+            // 繪製兩張圖表
             renderTwChart(twDates, twCloses, twVolumes);
             renderUsChart(twDates, alignedUsCloses, usId);
 
-            statusEl.innerText = "資料載入成功！";
+            if (!usRes.data || usRes.data.length === 0) {
+                statusEl.innerText = `台股資料成功載入！但美股 (${usId}) 查無資料，請檢查代號是否正確或權限。`;
+            } else {
+                statusEl.innerText = "台美股數據皆已成功載入並完成時間軸對齊！";
+            }
 
         } catch (error) {
-            console.error(error);
-            statusEl.innerText = "載入失敗，請確認網路連線或 Token 權限。";
+            console.error("載入失敗：", error);
+            statusEl.innerText = `載入失敗：${error.message}`;
         }
     }
 
-    // 渲染台股圖表
+    // 第一張：台股繪圖函式
     function renderTwChart(labels, closes, volumes) {
         const ctx = document.getElementById('twStockChart').getContext('2d');
         if (twChart) twChart.destroy();
@@ -317,7 +349,7 @@
         });
     }
 
-    // 渲染美股圖表（X 軸傳入相同的台股日期清單，達到精準對齊）
+    // 第二張：美股繪圖函式（使用相同的 labels，確保 X 軸精準對齊）
     function renderUsChart(labels, closes, usSymbol) {
         const ctx = document.getElementById('usStockChart').getContext('2d');
         if (usChart) usChart.destroy();
@@ -325,7 +357,7 @@
         usChart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: labels, // 採用相同的日期時間陣列
+                labels: labels,
                 datasets: [
                     {
                         label: `${usSymbol} 收盤價 (USD)`,
