@@ -3,243 +3,366 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>台股個股趨勢與加權指數新高分析</title>
-    <!-- 引入 Chart.js -->
+    <title>台美股對照趨勢分析看板</title>
+    <!-- Chart.js 視覺化圖表庫 -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 20px; background-color: #f8f9fa; color: #333; }
-        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
-        h2 { margin-top: 0; color: #1a252f; }
-        .input-group { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
-        input { padding: 10px 14px; font-size: 15px; border: 1px solid #ced4da; border-radius: 6px; outline: none; transition: border-color 0.2s; }
-        input:focus { border-color: #007bff; }
-        input[type="password"] { flex: 2; min-width: 250px; }
-        input[type="text"] { flex: 1; min-width: 150px; }
-        button { padding: 10px 20px; font-size: 15px; background-color: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background-color 0.2s; }
-        button:hover { background-color: #0056b3; }
-        .chart-container { position: relative; height: 60vh; width: 100%; margin-top: 10px; }
-        #status-msg { margin-bottom: 15px; font-size: 14px; padding: 10px; border-radius: 6px; display: none; }
-        .status-loading { background-color: #e2e3e5; color: #383d41; }
-        .status-error { background-color: #f8d7da; color: #721c24; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 20px;
+            background-color: #f8f9fa;
+            color: #333;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: #ffffff;
+            padding: 20px 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        h1 {
+            font-size: 22px;
+            margin-bottom: 20px;
+            color: #1a252f;
+            text-align: center;
+        }
+        .control-panel {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            justify-content: center;
+            background: #f1f3f5;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .input-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        label {
+            font-size: 14px;
+            font-weight: 600;
+        }
+        input {
+            padding: 8px 10px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #0d6efd;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background-color: #0b5ed7;
+        }
+        .chart-box {
+            position: relative;
+            margin-bottom: 25px;
+            background: #fff;
+            padding: 10px;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+        }
+        .chart-title {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #495057;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .status-msg {
+            text-align: center;
+            font-size: 14px;
+            color: #6c757d;
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>台股個股趨勢與大盤新高分析</h2>
-    <div class="input-group">
-        <input type="password" id="tokenInput" placeholder="請貼上您的 FinMind Token">
-        <input type="text" id="stockIdInput" placeholder="股票代號 (如: 2330)" value="2330">
-        <button onclick="fetchDataAndDraw()">查詢並繪圖</button>
-    </div>
+    <h1>台股 vs 美股對照趨勢看板</h1>
     
-    <div id="status-msg"></div>
+    <div class="control-panel">
+        <div class="input-group">
+            <label for="apiToken">API Token:</label>
+            <input type="password" id="apiToken" placeholder="貼上 FinMind Token" style="width: 140px;">
+        </div>
+        <div class="input-group">
+            <label for="twStockId">台股代號:</label>
+            <input type="text" id="twStockId" value="2330" style="width: 70px;">
+        </div>
+        <div class="input-group">
+            <label for="usStockId">美股對應:</label>
+            <input type="text" id="usStockId" value="TSM" style="width: 70px;">
+        </div>
+        <div class="input-group">
+            <label for="startDate">起始日期:</label>
+            <input type="date" id="startDate">
+        </div>
+        <button onclick="loadAllData()">查詢數據</button>
+    </div>
 
-    <div class="chart-container">
-        <canvas id="stockChart"></canvas>
+    <div id="status" class="status-msg">請輸入 API Token 後點擊查詢</div>
+
+    <!-- 第一張圖：台股趨勢圖 -->
+    <div class="chart-box">
+        <div class="chart-title">
+            <span id="twChartTitle">台股：2330 走勢與成交量</span>
+        </div>
+        <canvas id="twStockChart" height="200"></canvas>
+    </div>
+
+    <!-- 第二張圖：美股對照圖 -->
+    <div class="chart-box">
+        <div class="chart-title">
+            <span id="usChartTitle">美股對照：TSM (美股納斯達克/紐交所)</span>
+        </div>
+        <canvas id="usStockChart" height="200"></canvas>
     </div>
 </div>
 
 <script>
-let myChart = null;
+    // 1. 預設台美股對照對應表
+    const stockMapping = {
+        '2330': 'TSM', // 台積電 -> 台積電 ADR
+        '2303': 'UMC', // 聯電   -> 聯電 ADR
+        '2408': 'MU'   // 南亞科 -> 美光
+    };
 
-function showStatus(text, type) {
-    const statusDiv = document.getElementById('status-msg');
-    statusDiv.style.display = 'block';
-    statusDiv.innerText = text;
-    statusDiv.className = type === 'error' ? 'status-error' : 'status-loading';
-}
-
-function hideStatus() {
-    document.getElementById('status-msg').style.display = 'none';
-}
-
-// 計算 MA 均線
-function calculateMA(data, dayCount) {
-    let result = [];
-    for (let i = 0; i < data.length; i++) {
-        if (i < dayCount - 1) {
-            result.push(null);
-            continue;
-        }
-        let sum = 0;
-        for (let j = 0; j < dayCount; j++) {
-            sum += data[i - j];
-        }
-        result.push(Number((sum / dayCount).toFixed(2)));
-    }
-    return result;
-}
-
-async function fetchDataAndDraw() {
-    const token = document.getElementById('tokenInput').value.trim();
-    const stockId = document.getElementById('stockIdInput').value.trim();
-
-    if (!token || !stockId) {
-        alert('請輸入 FinMind Token 與股票代號！');
-        return;
-    }
-
-    showStatus('數據獲取中，請稍候...', 'loading');
-
-    // 設定搜尋區間（預設一年）
-    const endDate = new Date().toISOString().split('T')[0];
-    const startDateObj = new Date();
-    startDateObj.setFullYear(startDateObj.getFullYear() - 1);
-    const startDate = startDateObj.toISOString().split('T')[0];
-
-    try {
-        // 1. 抓取個股資料 (TaiwanStockPrice)
-        const stockUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${stockId}&start_date=${startDate}&end_date=${endDate}&token=${token}`;
-        const stockRes = await fetch(stockUrl);
-        const stockJson = await stockRes.json();
-
-        if (stockJson.status !== 200 || !stockJson.data || stockJson.data.length === 0) {
-            throw new Error(`個股資料抓取失敗：${stockJson.msg || '查無此股票代號或 Token 無效'}`);
-        }
-
-        // 2. 抓取大盤加權指數資料 (TaiwanStockPrice, data_id=TAIEX)
-        const taiexUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=TAIEX&start_date=${startDate}&end_date=${endDate}&token=${token}`;
-        const taiexRes = await fetch(taiexUrl);
-        const taiexJson = await taiexRes.json();
-
-        // 整理個股數據
-        const dates = stockJson.data.map(d => d.date);
-        const closePrices = stockJson.data.map(d => d.close);
-        const volumes = stockJson.data.map(d => Math.round((d.Trading_Volume || 0) / 1000)); // 換算成張數
-
-        // 計算均線
-        const ma5 = calculateMA(closePrices, 5);
-        const ma20 = calculateMA(closePrices, 20);
-        const ma60 = calculateMA(closePrices, 60);
-
-        // 計算大盤當期歷史創新高的日期集合
-        const taiexHighDates = new Set();
-        if (taiexJson.data && taiexJson.data.length > 0) {
-            let maxTaiex = -Infinity;
-            taiexJson.data.forEach(d => {
-                const price = d.close;
-                if (price > maxTaiex) {
-                    maxTaiex = price;
-                    taiexHighDates.add(d.date); // 記錄創新高當天
-                }
-            });
-        }
-
-        // 大盤創新高的點標記圓圈 (點半徑 6px)，其餘為 0
-        const pointRadiusArr = dates.map(date => taiexHighDates.has(date) ? 6 : 0);
-        const pointHoverRadiusArr = dates.map(date => taiexHighDates.has(date) ? 8 : 3);
-
-        hideStatus();
-        renderChart(dates, closePrices, volumes, ma5, ma20, ma60, pointRadiusArr, pointHoverRadiusArr);
-
-    } catch (error) {
-        console.error(error);
-        showStatus(error.message, 'error');
-    }
-}
-
-function renderChart(labels, closePrices, volumes, ma5, ma20, ma60, pointRadius, pointHoverRadius) {
-    const ctx = document.getElementById('stockChart').getContext('2d');
-
-    if (myChart) {
-        myChart.destroy();
-    }
-
-    myChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    type: 'line',
-                    label: '收盤價 (Y1)',
-                    data: closePrices,
-                    borderColor: '#dc3545',
-                    borderWidth: 2,
-                    fill: false,
-                    yAxisID: 'y1',
-                    pointRadius: pointRadius,
-                    pointBackgroundColor: '#ffc107',
-                    pointBorderColor: '#dc3545',
-                    pointBorderWidth: 2,
-                    pointHoverRadius: pointHoverRadius
-                },
-                {
-                    type: 'line',
-                    label: '5日均線 (MA5)',
-                    data: ma5,
-                    borderColor: '#0d6efd',
-                    borderWidth: 1.5,
-                    pointRadius: 0,
-                    fill: false,
-                    yAxisID: 'y1'
-                },
-                {
-                    type: 'line',
-                    label: '20日均線 (MA20)',
-                    data: ma20,
-                    borderColor: '#198754',
-                    borderWidth: 1.5,
-                    pointRadius: 0,
-                    fill: false,
-                    yAxisID: 'y1'
-                },
-                {
-                    type: 'line',
-                    label: '60日均線 (MA60)',
-                    data: ma60,
-                    borderColor: '#6f42c1',
-                    borderWidth: 1.5,
-                    pointRadius: 0,
-                    fill: false,
-                    yAxisID: 'y1'
-                },
-                {
-                    type: 'bar',
-                    label: '成交量/張 (Y2)',
-                    data: volumes,
-                    backgroundColor: 'rgba(108, 117, 125, 0.3)',
-                    yAxisID: 'y2'
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
-            scales: {
-                x: { title: { display: true, text: '日期' } },
-                y1: {
-                    type: 'linear',
-                    display: true,
-                    position: 'left',
-                    title: { display: true, text: '股價 (TWD)' }
-                },
-                y2: {
-                    type: 'linear',
-                    display: true,
-                    position: 'right',
-                    grid: { drawOnChartArea: false },
-                    title: { display: true, text: '成交量 (張)' }
-                }
-            },
-            plugins: {
-                tooltip: {
-                    callbacks: {
-                        afterBody: function(context) {
-                            const index = context[0].dataIndex;
-                            if (pointRadius[index] > 0) {
-                                return '\n★ 當日加權指數創歷史新高！';
-                            }
-                            return '';
-                        }
-                    }
-                }
-            }
+    // 自動依台股代號切換預設美股代號
+    document.getElementById('twStockId').addEventListener('input', function(e) {
+        const val = e.target.value.trim();
+        if (stockMapping[val]) {
+            document.getElementById('usStockId').value = stockMapping[val];
         }
     });
-}
+
+    // 預設日期帶入 1 年前
+    const defaultStart = new Date();
+    defaultStart.setFullYear(defaultStart.getFullYear() - 1);
+    document.getElementById('startDate').value = defaultStart.toISOString().split('T')[0];
+
+    // 全域圖表物件變數
+    let twChart = null;
+    let usChart = null;
+
+    // 計算移動平均線 MA
+    function calculateMA(dayCount, data) {
+        let result = [];
+        for (let i = 0; i < data.length; i++) {
+            if (i < dayCount - 1) {
+                result.push(null);
+            } else {
+                let sum = 0;
+                for (let j = 0; j < dayCount; j++) {
+                    sum += data[i - j];
+                }
+                result.push((sum / dayCount).toFixed(2));
+            }
+        }
+        return result;
+    }
+
+    // 主查詢函式
+    async function loadAllData() {
+        const token = document.getElementById('apiToken').value.trim();
+        const twId = document.getElementById('twStockId').value.trim();
+        const usId = document.getElementById('usStockId').value.trim();
+        const startDate = document.getElementById('startDate').value;
+        const statusEl = document.getElementById('status');
+
+        if (!token) {
+            alert("請先輸入 FinMind API Token！");
+            return;
+        }
+
+        statusEl.innerText = "資料載入中，請稍候...";
+
+        try {
+            // 2. 平行發送抓取「台股」與「美股」請求
+            const twUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${twId}&start_date=${startDate}&token=${token}`;
+            const usUrl = `https://api.finmindtrade.com/api/v4/data?dataset=USStockPrice&data_id=${usId}&start_date=${startDate}&token=${token}`;
+
+            const [twRes, usRes] = await Promise.all([
+                fetch(twUrl).then(res => res.json()),
+                fetch(usUrl).then(res => res.json())
+            ]);
+
+            if (!twRes.data || twRes.data.length === 0) {
+                statusEl.innerText = `查無台股 (${twId}) 資料`;
+                return;
+            }
+
+            // 更新圖表標題
+            document.getElementById('twChartTitle').innerText = `台股：${twId} 股價與成交量`;
+            document.getElementById('usChartTitle').innerText = `美股對照：${usId} 股價走勢`;
+
+            // 3. 處理台股資料
+            const twDates = twRes.data.map(d => d.date);
+            const twCloses = twRes.data.map(d => d.close);
+            const twVolumes = twRes.data.map(d => d.Trading_Volume ? d.Trading_Volume / 1000 : 0); // 轉張數
+
+            // 4. 處理美股資料並與台股日期時間軸對齊
+            const usDataMap = {};
+            if (usRes.data) {
+                usRes.data.forEach(d => {
+                    // 美股 FinMind 回傳 close 欄位
+                    usDataMap[d.date] = d.Close || d.close;
+                });
+            }
+
+            // 以台股交易日日期為 X 軸主基準對齊美股股價（若休市則代入前一日值或 null）
+            let lastUsPrice = null;
+            const alignedUsCloses = twDates.map(date => {
+                if (usDataMap[date] !== undefined) {
+                    lastUsPrice = usDataMap[date];
+                    return lastUsPrice;
+                }
+                return lastUsPrice; // 填補無交易日數值，確保連線平滑
+            });
+
+            // 5. 渲染兩張圖表
+            renderTwChart(twDates, twCloses, twVolumes);
+            renderUsChart(twDates, alignedUsCloses, usId);
+
+            statusEl.innerText = "資料載入成功！";
+
+        } catch (error) {
+            console.error(error);
+            statusEl.innerText = "載入失敗，請確認網路連線或 Token 權限。";
+        }
+    }
+
+    // 渲染台股圖表
+    function renderTwChart(labels, closes, volumes) {
+        const ctx = document.getElementById('twStockChart').getContext('2d');
+        if (twChart) twChart.destroy();
+
+        twChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        type: 'line',
+                        label: '收盤價',
+                        data: closes,
+                        borderColor: '#e63946',
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
+                        yAxisID: 'y1',
+                        pointRadius: 0,
+                        pointHoverRadius: 4
+                    },
+                    {
+                        type: 'line',
+                        label: '5日MA',
+                        data: calculateMA(5, closes),
+                        borderColor: '#fca311',
+                        borderWidth: 1.2,
+                        pointRadius: 0,
+                        yAxisID: 'y1'
+                    },
+                    {
+                        type: 'line',
+                        label: '20日MA',
+                        data: calculateMA(20, closes),
+                        borderColor: '#2a9d8f',
+                        borderWidth: 1.2,
+                        pointRadius: 0,
+                        yAxisID: 'y1'
+                    },
+                    {
+                        type: 'line',
+                        label: '60日MA',
+                        data: calculateMA(60, closes),
+                        borderColor: '#457b9d',
+                        borderWidth: 1.2,
+                        pointRadius: 0,
+                        yAxisID: 'y1'
+                    },
+                    {
+                        type: 'bar',
+                        label: '成交量(張)',
+                        data: volumes,
+                        backgroundColor: 'rgba(108, 117, 125, 0.4)',
+                        yAxisID: 'y2'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    x: { ticks: { maxTicksLimit: 12 } },
+                    y1: { type: 'linear', position: 'left', title: { display: true, text: '價格 (NTD)' } },
+                    y2: { type: 'linear', position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: '成交量 (張)' } }
+                }
+            }
+        });
+    }
+
+    // 渲染美股圖表（X 軸傳入相同的台股日期清單，達到精準對齊）
+    function renderUsChart(labels, closes, usSymbol) {
+        const ctx = document.getElementById('usStockChart').getContext('2d');
+        if (usChart) usChart.destroy();
+
+        usChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels, // 採用相同的日期時間陣列
+                datasets: [
+                    {
+                        label: `${usSymbol} 收盤價 (USD)`,
+                        data: closes,
+                        borderColor: '#3a86ff',
+                        backgroundColor: 'rgba(58, 134, 255, 0.08)',
+                        fill: true,
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        pointHoverRadius: 4
+                    },
+                    {
+                        label: '5日MA',
+                        data: calculateMA(5, closes),
+                        borderColor: '#ff006e',
+                        borderWidth: 1.2,
+                        pointRadius: 0
+                    },
+                    {
+                        label: '20日MA',
+                        data: calculateMA(20, closes),
+                        borderColor: '#8338ec',
+                        borderWidth: 1.2,
+                        pointRadius: 0
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    x: { ticks: { maxTicksLimit: 12 } },
+                    y: { type: 'linear', position: 'left', title: { display: true, text: '價格 (USD)' } }
+                }
+            }
+        });
+    }
 </script>
 
 </body>
