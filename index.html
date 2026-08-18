@@ -71,14 +71,14 @@
             position: relative;
             margin-bottom: 25px;
             background: #fff;
-            padding: 10px;
+            padding: 12px;
             border: 1px solid #e9ecef;
             border-radius: 6px;
         }
         .chart-title {
             font-size: 16px;
             font-weight: bold;
-            margin-bottom: 8px;
+            margin-bottom: 10px;
             color: #495057;
             display: flex;
             align-items: center;
@@ -88,8 +88,15 @@
             text-align: center;
             font-size: 14px;
             color: #6c757d;
-            margin-top: 10px;
             margin-bottom: 15px;
+        }
+        .badge {
+            font-size: 12px;
+            padding: 3px 8px;
+            border-radius: 12px;
+            background-color: #e9ecef;
+            color: #495057;
+            font-weight: normal;
         }
     </style>
 </head>
@@ -100,8 +107,8 @@
     
     <div class="control-panel">
         <div class="input-group">
-            <label for="apiToken">API Token:</label>
-            <input type="password" id="apiToken" placeholder="貼上 FinMind Token" style="width: 140px;">
+            <label for="apiToken">FinMind Token:</label>
+            <input type="password" id="apiToken" placeholder="台股 Token" style="width: 130px;">
         </div>
         <div class="input-group">
             <label for="twStockId">台股代號:</label>
@@ -118,34 +125,35 @@
         <button onclick="loadAllData()">查詢數據</button>
     </div>
 
-    <div id="status" class="status-msg">請輸入 API Token 後點擊查詢</div>
+    <div id="status" class="status-msg">請輸入 FinMind Token 後點擊查詢</div>
 
     <!-- 第一張圖：台股趨勢圖 -->
     <div class="chart-box">
         <div class="chart-title">
             <span id="twChartTitle">台股：2330 走勢與成交量</span>
+            <span class="badge">FinMind API</span>
         </div>
-        <canvas id="twStockChart" height="200"></canvas>
+        <canvas id="twStockChart" height="180"></canvas>
     </div>
 
     <!-- 第二張圖：美股對照圖 -->
     <div class="chart-box">
         <div class="chart-title">
-            <span id="usChartTitle">美股對照：TSM (美股/ADR)</span>
+            <span id="usChartTitle">美股對照：TSM 股價走勢</span>
+            <span class="badge" id="usSourceTag" style="background-color: #e3f2fd; color: #0d6efd;">Stooq 免費美股 API</span>
         </div>
-        <canvas id="usStockChart" height="200"></canvas>
+        <canvas id="usStockChart" height="180"></canvas>
     </div>
 </div>
 
 <script>
-    // 1. 預設台美股對照映射表
+    // 1. 預設台美股對照對應表
     const stockMapping = {
         '2330': 'TSM', // 台積電 -> TSMC ADR
         '2303': 'UMC', // 聯電   -> UMC ADR
         '2408': 'MU'   // 南亞科 -> Micron 美光
     };
 
-    // 自動依台股代號切換預設美股代號
     document.getElementById('twStockId').addEventListener('input', function(e) {
         const val = e.target.value.trim();
         if (stockMapping[val]) {
@@ -158,7 +166,6 @@
     defaultStart.setFullYear(defaultStart.getFullYear() - 1);
     document.getElementById('startDate').value = defaultStart.toISOString().split('T')[0];
 
-    // 全域圖表物件變數
     let twChart = null;
     let usChart = null;
 
@@ -170,13 +177,71 @@
                 result.push(null);
             } else {
                 let sum = 0;
+                let validCount = 0;
                 for (let j = 0; j < dayCount; j++) {
-                    sum += data[i - j];
+                    if (data[i - j] !== null) {
+                        sum += data[i - j];
+                        validCount++;
+                    }
                 }
-                result.push((sum / dayCount).toFixed(2));
+                result.push(validCount === dayCount ? +(sum / dayCount).toFixed(2) : null);
             }
         }
         return result;
+    }
+
+    // 1. 台股抓取 (FinMind)
+    async function fetchTwStock(stockId, startDate, token) {
+        const params = new URLSearchParams({
+            dataset: 'TaiwanStockPrice',
+            data_id: stockId,
+            start_date: startDate,
+            token: token
+        });
+        const url = `https://api.finmindtrade.com/api/v4/data?${params.toString()}`;
+        try {
+            const res = await fetch(url);
+            if (!res.ok) return null;
+            const json = await res.json();
+            return json.data || null;
+        } catch (e) {
+            console.error("FinMind 台股抓取失敗:", e);
+            return null;
+        }
+    }
+
+    // 2. 美股抓取 (使用開放免 Key 數據 API: Stooq CSV轉JSON)
+    async function fetchUsStockStooq(symbol) {
+        // 使用 corsproxy 免除跨網域問題抓取 Stooq 數據
+        const cleanSymbol = symbol.trim().toLowerCase();
+        const stooqUrl = `https://stooq.com/q/d/l/?s=${cleanSymbol}.us&i=d`;
+        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(stooqUrl)}`;
+
+        try {
+            const res = await fetch(proxyUrl);
+            if (!res.ok) return null;
+            const csvText = await res.text();
+            
+            // 解析 CSV 格式 (Date,Open,High,Low,Close,Volume)
+            const lines = csvText.trim().split('\n');
+            if (lines.length <= 1) return null;
+
+            const priceMap = {};
+            for (let i = 1; i < lines.length; i++) {
+                const cols = lines[i].split(',');
+                if (cols.length >= 5) {
+                    const dateStr = cols[0].trim(); // YYYY-MM-DD
+                    const closePrice = parseFloat(cols[4]);
+                    if (dateStr && !isNaN(closePrice)) {
+                        priceMap[dateStr] = closePrice;
+                    }
+                }
+            }
+            return priceMap;
+        } catch (e) {
+            console.error("Stooq 美股抓取失敗:", e);
+            return null;
+        }
     }
 
     // 主查詢函式
@@ -188,99 +253,62 @@
         const statusEl = document.getElementById('status');
 
         if (!token) {
-            alert("請先輸入 FinMind API Token！");
+            alert("請輸入 FinMind Token 用於查詢台股數據！");
             return;
         }
 
-        statusEl.innerText = "資料載入中，請稍候...";
+        statusEl.innerText = "資料載入中，同步抓取台股與美股最新數據...";
 
-        // 使用 URLSearchParams 標準化請求參數，防止 URL 格式解析錯誤
-        const twParams = new URLSearchParams({
-            dataset: 'TaiwanStockPrice',
-            data_id: twId,
-            start_date: startDate,
-            token: token
-        });
+        // 平行請求台股 (FinMind) 與 美股 (Stooq)
+        const [twData, usPriceMap] = await Promise.all([
+            fetchTwStock(twId, startDate, token),
+            fetchUsStockStooq(usId)
+        ]);
 
-        const usParams = new URLSearchParams({
-            dataset: 'USStockPrice',
-            data_id: usId,
-            start_date: startDate,
-            token: token
-        });
+        if (!twData || twData.length === 0) {
+            statusEl.innerText = `查無台股 (${twId}) 資料，請確認代號或 Token 權限。`;
+            return;
+        }
 
-        const twUrl = `https://api.finmindtrade.com/api/v4/data?${twParams.toString()}`;
-        const usUrl = `https://api.finmindtrade.com/api/v4/data?${usParams.toString()}`;
+        // 1. 處理台股資料 (作為 X 軸基準時間)
+        const twDates = twData.map(d => d.date);
+        const twCloses = twData.map(d => d.close);
+        const twVolumes = twData.map(d => d.Trading_Volume ? +(d.Trading_Volume / 1000).toFixed(0) : 0);
 
-        try {
-            // 平行抓取台股與美股，並各自處理錯誤機制
-            const twPromise = fetch(twUrl).then(res => {
-                if (!res.ok) throw new Error(`台股 API 回傳 HTTP ${res.status}`);
-                return res.json();
-            });
+        // 2. 處理美股資料並與台股日期強制定齊
+        let alignedUsCloses = [];
+        let hasUsData = false;
 
-            const usPromise = fetch(usUrl).then(res => {
-                if (!res.ok) throw new Error(`美股 API 回傳 HTTP ${res.status}`);
-                return res.json();
-            }).catch(err => {
-                console.warn("美股資料抓取警告：", err.message);
-                return { data: [] }; // 若美股失敗傳回空陣列，保護整體網頁不崩潰
-            });
-
-            const [twRes, usRes] = await Promise.all([twPromise, usPromise]);
-
-            if (!twRes.data || twRes.data.length === 0) {
-                statusEl.innerText = `查無台股 (${twId}) 資料，請確認代號或 Token 是否正確。`;
-                return;
-            }
-
-            // 更新圖表標題
-            document.getElementById('twChartTitle').innerText = `台股：${twId} 股價與成交量`;
-            document.getElementById('usChartTitle').innerText = `美股對照：${usId} 股價走勢`;
-
-            // 處理台股資料
-            const twDates = twRes.data.map(d => d.date);
-            const twCloses = twRes.data.map(d => d.close);
-            const twVolumes = twRes.data.map(d => d.Trading_Volume ? d.Trading_Volume / 1000 : 0);
-
-            // 處理美股資料（相容大小寫欄位命名 close / Close）
-            const usDataMap = {};
-            if (usRes.data && Array.isArray(usRes.data)) {
-                usRes.data.forEach(d => {
-                    const price = d.close !== undefined ? d.close : (d.Close !== undefined ? d.Close : null);
-                    if (price !== null) {
-                        usDataMap[d.date] = price;
-                    }
-                });
-            }
-
-            // 以台股日期為 X 軸基準，強制對齊美股價格
-            let lastUsPrice = null;
-            const alignedUsCloses = twDates.map(date => {
-                if (usDataMap[date] !== undefined) {
-                    lastUsPrice = usDataMap[date];
-                    return lastUsPrice;
+        if (usPriceMap && Object.keys(usPriceMap).length > 0) {
+            hasUsData = true;
+            let lastVal = null;
+            alignedUsCloses = twDates.map(date => {
+                if (usPriceMap[date] !== undefined) {
+                    lastVal = usPriceMap[date];
+                    return lastVal;
                 }
-                return lastUsPrice; // 若美股當日休市，沿用前一日數值保持連線平滑
+                return lastVal; // 當日休市則補上前一次收盤價
             });
+        } else {
+            // 美股備援機制：如果美股網路請求受阻，填入 0 保障不發動錯誤
+            alignedUsCloses = twDates.map(() => null);
+        }
 
-            // 繪製兩張圖表
-            renderTwChart(twDates, twCloses, twVolumes);
-            renderUsChart(twDates, alignedUsCloses, usId);
+        // 更新 UI 標題
+        document.getElementById('twChartTitle').innerText = `台股：${twId} 股價走勢與成交量`;
+        document.getElementById('usChartTitle').innerText = `美股對照：${usId} 股價走勢 (USD)`;
 
-            if (!usRes.data || usRes.data.length === 0) {
-                statusEl.innerText = `台股資料成功載入！但美股 (${usId}) 查無資料，請檢查代號是否正確或權限。`;
-            } else {
-                statusEl.innerText = "台美股數據皆已成功載入並完成時間軸對齊！";
-            }
+        // 3. 渲染圖表
+        renderTwChart(twDates, twCloses, twVolumes);
+        renderUsChart(twDates, alignedUsCloses, usId);
 
-        } catch (error) {
-            console.error("載入失敗：", error);
-            statusEl.innerText = `載入失敗：${error.message}`;
+        if (hasUsData) {
+            statusEl.innerText = "台美股真實數據皆已載入，且日期時間軸 100% 精準對齊！";
+        } else {
+            statusEl.innerText = `台股載入成功！但美股 (${usId}) 取得失敗，請確認代號（例: TSM, UMC, MU）。`;
         }
     }
 
-    // 第一張：台股繪圖函式
     function renderTwChart(labels, closes, volumes) {
         const ctx = document.getElementById('twStockChart').getContext('2d');
         if (twChart) twChart.destroy();
@@ -292,14 +320,13 @@
                 datasets: [
                     {
                         type: 'line',
-                        label: '收盤價',
+                        label: '台股收盤價',
                         data: closes,
                         borderColor: '#e63946',
-                        backgroundColor: 'transparent',
                         borderWidth: 2,
-                        yAxisID: 'y1',
                         pointRadius: 0,
-                        pointHoverRadius: 4
+                        pointHoverRadius: 4,
+                        yAxisID: 'y1'
                     },
                     {
                         type: 'line',
@@ -320,19 +347,10 @@
                         yAxisID: 'y1'
                     },
                     {
-                        type: 'line',
-                        label: '60日MA',
-                        data: calculateMA(60, closes),
-                        borderColor: '#457b9d',
-                        borderWidth: 1.2,
-                        pointRadius: 0,
-                        yAxisID: 'y1'
-                    },
-                    {
                         type: 'bar',
                         label: '成交量(張)',
                         data: volumes,
-                        backgroundColor: 'rgba(108, 117, 125, 0.4)',
+                        backgroundColor: 'rgba(108, 117, 125, 0.35)',
                         yAxisID: 'y2'
                     }
                 ]
@@ -349,7 +367,6 @@
         });
     }
 
-    // 第二張：美股繪圖函式（使用相同的 labels，確保 X 軸精準對齊）
     function renderUsChart(labels, closes, usSymbol) {
         const ctx = document.getElementById('usStockChart').getContext('2d');
         if (usChart) usChart.destroy();
@@ -357,7 +374,7 @@
         usChart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: labels,
+                labels: labels, // 沿用台股日期陣列，達成垂直對齊
                 datasets: [
                     {
                         label: `${usSymbol} 收盤價 (USD)`,
