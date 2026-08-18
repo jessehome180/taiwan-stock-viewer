@@ -4,29 +4,37 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>台股個股趨勢與加權指數新高分析</title>
-    <!-- 引入 Chart.js 圖表庫 -->
+    <!-- 引入 Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
-        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 20px; background-color: #f8f9fa; color: #333; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+        h2 { margin-top: 0; color: #1a252f; }
         .input-group { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
-        input { padding: 8px 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; }
-        button { padding: 8px 16px; font-size: 16px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        input { padding: 10px 14px; font-size: 15px; border: 1px solid #ced4da; border-radius: 6px; outline: none; transition: border-color 0.2s; }
+        input:focus { border-color: #007bff; }
+        input[type="password"] { flex: 2; min-width: 250px; }
+        input[type="text"] { flex: 1; min-width: 150px; }
+        button { padding: 10px 20px; font-size: 15px; background-color: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background-color 0.2s; }
         button:hover { background-color: #0056b3; }
-        .chart-container { position: relative; height: 60vh; width: 100%; }
-        #loading { display: none; color: #666; font-weight: bold; margin-bottom: 10px; }
+        .chart-container { position: relative; height: 60vh; width: 100%; margin-top: 10px; }
+        #status-msg { margin-bottom: 15px; font-size: 14px; padding: 10px; border-radius: 6px; display: none; }
+        .status-loading { background-color: #e2e3e5; color: #383d41; }
+        .status-error { background-color: #f8d7da; color: #721c24; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>台股個股趨勢分析圖</h2>
+    <h2>台股個股趨勢與大盤新高分析</h2>
     <div class="input-group">
-        <input type="password" id="tokenInput" placeholder="請輸入 FinMind Token">
-        <input type="text" id="stockIdInput" placeholder="股票代號 (例: 2330)">
+        <input type="password" id="tokenInput" placeholder="請貼上您的 FinMind Token">
+        <input type="text" id="stockIdInput" placeholder="股票代號 (如: 2330)" value="2330">
         <button onclick="fetchDataAndDraw()">查詢並繪圖</button>
     </div>
-    <div id="loading">數據讀取中，請稍候...</div>
+    
+    <div id="status-msg"></div>
+
     <div class="chart-container">
         <canvas id="stockChart"></canvas>
     </div>
@@ -35,7 +43,18 @@
 <script>
 let myChart = null;
 
-// 計算移動平均線 (MA)
+function showStatus(text, type) {
+    const statusDiv = document.getElementById('status-msg');
+    statusDiv.style.display = 'block';
+    statusDiv.innerText = text;
+    statusDiv.className = type === 'error' ? 'status-error' : 'status-loading';
+}
+
+function hideStatus() {
+    document.getElementById('status-msg').style.display = 'none';
+}
+
+// 計算 MA 均線
 function calculateMA(data, dayCount) {
     let result = [];
     for (let i = 0; i < data.length; i++) {
@@ -47,7 +66,7 @@ function calculateMA(data, dayCount) {
         for (let j = 0; j < dayCount; j++) {
             sum += data[i - j];
         }
-        result.push((sum / dayCount).toFixed(2));
+        result.push(Number((sum / dayCount).toFixed(2)));
     }
     return result;
 }
@@ -55,72 +74,68 @@ function calculateMA(data, dayCount) {
 async function fetchDataAndDraw() {
     const token = document.getElementById('tokenInput').value.trim();
     const stockId = document.getElementById('stockIdInput').value.trim();
-    const loading = document.getElementById('loading');
 
     if (!token || !stockId) {
-        alert('請輸入 FinMind Token 與 股票代號！');
+        alert('請輸入 FinMind Token 與股票代號！');
         return;
     }
 
-    loading.style.display = 'block';
+    showStatus('數據獲取中，請稍候...', 'loading');
 
-    // 預設查詢過去一年的數據
+    // 設定搜尋區間（預設一年）
     const endDate = new Date().toISOString().split('T')[0];
     const startDateObj = new Date();
     startDateObj.setFullYear(startDateObj.getFullYear() - 1);
     const startDate = startDateObj.toISOString().split('T')[0];
 
     try {
-        // 1. 抓取個股資料 (Y1: 股價, Y2: 成交量)
+        // 1. 抓取個股資料 (TaiwanStockPrice)
         const stockUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${stockId}&start_date=${startDate}&end_date=${endDate}&token=${token}`;
         const stockRes = await fetch(stockUrl);
-        const stockData = await stockRes.json();
+        const stockJson = await stockRes.json();
 
-        if (!stockData.data || stockData.data.length === 0) {
-            alert('查無個股資料，請確認代號與 Token 是否正確');
-            loading.style.display = 'none';
-            return;
+        if (stockJson.status !== 200 || !stockJson.data || stockJson.data.length === 0) {
+            throw new Error(`個股資料抓取失敗：${stockJson.msg || '查無此股票代號或 Token 無效'}`);
         }
 
-        // 2. 抓取加權指數資料 (TAIEX: 大盤)
-        const taiexUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanTAIEX&start_date=${startDate}&end_date=${endDate}&token=${token}`;
+        // 2. 抓取大盤加權指數資料 (TaiwanStockPrice, data_id=TAIEX)
+        const taiexUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=TAIEX&start_date=${startDate}&end_date=${endDate}&token=${token}`;
         const taiexRes = await fetch(taiexUrl);
-        const taiexData = await taiexRes.json();
+        const taiexJson = await taiexRes.json();
 
-        // 整理資料
-        const dates = stockData.data.map(d => d.date);
-        const closePrices = stockData.data.map(d => d.close);
-        const volumes = stockData.data.map(d => Math.round(d.Trading_Volume / 1000)); // 轉為張數
+        // 整理個股數據
+        const dates = stockJson.data.map(d => d.date);
+        const closePrices = stockJson.data.map(d => d.close);
+        const volumes = stockJson.data.map(d => Math.round((d.Trading_Volume || 0) / 1000)); // 換算成張數
 
         // 計算均線
         const ma5 = calculateMA(closePrices, 5);
         const ma20 = calculateMA(closePrices, 20);
         const ma60 = calculateMA(closePrices, 60);
 
-        // 標記大盤創新高日期
-        let maxTaiex = -Infinity;
+        // 計算大盤當期歷史創新高的日期集合
         const taiexHighDates = new Set();
-        if (taiexData.data) {
-            taiexData.data.forEach(d => {
-                if (d.price > maxTaiex) {
-                    maxTaiex = d.price;
-                    taiexHighDates.add(d.date); // 記錄創新高的日期
+        if (taiexJson.data && taiexJson.data.length > 0) {
+            let maxTaiex = -Infinity;
+            taiexJson.data.forEach(d => {
+                const price = d.close;
+                if (price > maxTaiex) {
+                    maxTaiex = price;
+                    taiexHighDates.add(d.date); // 記錄創新高當天
                 }
             });
         }
 
-        // 建立圖表上的點陣標示（大盤創新高日標示圓圈，其餘為 0 像素）
-        const pointRadius = dates.map(date => taiexHighDates.has(date) ? 6 : 0);
-        const pointHoverRadius = dates.map(date => taiexHighDates.has(date) ? 8 : 3);
+        // 大盤創新高的點標記圓圈 (點半徑 6px)，其餘為 0
+        const pointRadiusArr = dates.map(date => taiexHighDates.has(date) ? 6 : 0);
+        const pointHoverRadiusArr = dates.map(date => taiexHighDates.has(date) ? 8 : 3);
 
-        // 繪製圖表
-        renderChart(dates, closePrices, volumes, ma5, ma20, ma60, pointRadius, pointHoverRadius);
+        hideStatus();
+        renderChart(dates, closePrices, volumes, ma5, ma20, ma60, pointRadiusArr, pointHoverRadiusArr);
 
     } catch (error) {
         console.error(error);
-        alert('抓取資料失敗：' + error.message);
-    } finally {
-        loading.style.display = 'none';
+        showStatus(error.message, 'error');
     }
 }
 
@@ -128,11 +143,11 @@ function renderChart(labels, closePrices, volumes, ma5, ma20, ma60, pointRadius,
     const ctx = document.getElementById('stockChart').getContext('2d');
 
     if (myChart) {
-        myChart.destroy(); // 銷毀舊圖表
+        myChart.destroy();
     }
 
     myChart = new Chart(ctx, {
-        type: 'bar', // 主類型設為 bar，供成交量使用
+        type: 'bar',
         data: {
             labels: labels,
             datasets: [
@@ -144,7 +159,7 @@ function renderChart(labels, closePrices, volumes, ma5, ma20, ma60, pointRadius,
                     borderWidth: 2,
                     fill: false,
                     yAxisID: 'y1',
-                    pointRadius: pointRadius, // 大盤創新高當天顯示圓圈
+                    pointRadius: pointRadius,
                     pointBackgroundColor: '#ffc107',
                     pointBorderColor: '#dc3545',
                     pointBorderWidth: 2,
@@ -184,7 +199,7 @@ function renderChart(labels, closePrices, volumes, ma5, ma20, ma60, pointRadius,
                     type: 'bar',
                     label: '成交量/張 (Y2)',
                     data: volumes,
-                    backgroundColor: 'rgba(108, 117, 125, 0.4)',
+                    backgroundColor: 'rgba(108, 117, 125, 0.3)',
                     yAxisID: 'y2'
                 }
             ]
@@ -205,7 +220,7 @@ function renderChart(labels, closePrices, volumes, ma5, ma20, ma60, pointRadius,
                     type: 'linear',
                     display: true,
                     position: 'right',
-                    grid: { drawOnChartArea: false }, // 不繪製重疊網格
+                    grid: { drawOnChartArea: false },
                     title: { display: true, text: '成交量 (張)' }
                 }
             },
@@ -213,9 +228,8 @@ function renderChart(labels, closePrices, volumes, ma5, ma20, ma60, pointRadius,
                 tooltip: {
                     callbacks: {
                         afterBody: function(context) {
-                            const date = context[0].label;
-                            // 提醒使用者當天是否是大盤創新高日
-                            if (context[0].dataset.pointRadius && context[0].dataset.pointRadius[context[0].dataIndex] > 0) {
+                            const index = context[0].dataIndex;
+                            if (pointRadius[index] > 0) {
                                 return '\n★ 當日加權指數創歷史新高！';
                             }
                             return '';
