@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台股個股趨勢與加權指數新高分析</title>
+    <!-- 引入 Chart.js 圖表庫 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .input-group { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        input { padding: 8px 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; }
+        button { padding: 8px 16px; font-size: 16px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+        .chart-container { position: relative; height: 60vh; width: 100%; }
+        #loading { display: none; color: #666; font-weight: bold; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>台股個股趨勢分析圖</h2>
+    <div class="input-group">
+        <input type="password" id="tokenInput" placeholder="請輸入 FinMind Token">
+        <input type="text" id="stockIdInput" placeholder="股票代號 (例: 2330)">
+        <button onclick="fetchDataAndDraw()">查詢並繪圖</button>
+    </div>
+    <div id="loading">數據讀取中，請稍候...</div>
+    <div class="chart-container">
+        <canvas id="stockChart"></canvas>
+    </div>
+</div>
+
+<script>
+let myChart = null;
+
+// 計算移動平均線 (MA)
+function calculateMA(data, dayCount) {
+    let result = [];
+    for (let i = 0; i < data.length; i++) {
+        if (i < dayCount - 1) {
+            result.push(null);
+            continue;
+        }
+        let sum = 0;
+        for (let j = 0; j < dayCount; j++) {
+            sum += data[i - j];
+        }
+        result.push((sum / dayCount).toFixed(2));
+    }
+    return result;
+}
+
+async function fetchDataAndDraw() {
+    const token = document.getElementById('tokenInput').value.trim();
+    const stockId = document.getElementById('stockIdInput').value.trim();
+    const loading = document.getElementById('loading');
+
+    if (!token || !stockId) {
+        alert('請輸入 FinMind Token 與 股票代號！');
+        return;
+    }
+
+    loading.style.display = 'block';
+
+    // 預設查詢過去一年的數據
+    const endDate = new Date().toISOString().split('T')[0];
+    const startDateObj = new Date();
+    startDateObj.setFullYear(startDateObj.getFullYear() - 1);
+    const startDate = startDateObj.toISOString().split('T')[0];
+
+    try {
+        // 1. 抓取個股資料 (Y1: 股價, Y2: 成交量)
+        const stockUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${stockId}&start_date=${startDate}&end_date=${endDate}&token=${token}`;
+        const stockRes = await fetch(stockUrl);
+        const stockData = await stockRes.json();
+
+        if (!stockData.data || stockData.data.length === 0) {
+            alert('查無個股資料，請確認代號與 Token 是否正確');
+            loading.style.display = 'none';
+            return;
+        }
+
+        // 2. 抓取加權指數資料 (TAIEX: 大盤)
+        const taiexUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanTAIEX&start_date=${startDate}&end_date=${endDate}&token=${token}`;
+        const taiexRes = await fetch(taiexUrl);
+        const taiexData = await taiexRes.json();
+
+        // 整理資料
+        const dates = stockData.data.map(d => d.date);
+        const closePrices = stockData.data.map(d => d.close);
+        const volumes = stockData.data.map(d => Math.round(d.Trading_Volume / 1000)); // 轉為張數
+
+        // 計算均線
+        const ma5 = calculateMA(closePrices, 5);
+        const ma20 = calculateMA(closePrices, 20);
+        const ma60 = calculateMA(closePrices, 60);
+
+        // 標記大盤創新高日期
+        let maxTaiex = -Infinity;
+        const taiexHighDates = new Set();
+        if (taiexData.data) {
+            taiexData.data.forEach(d => {
+                if (d.price > maxTaiex) {
+                    maxTaiex = d.price;
+                    taiexHighDates.add(d.date); // 記錄創新高的日期
+                }
+            });
+        }
+
+        // 建立圖表上的點陣標示（大盤創新高日標示圓圈，其餘為 0 像素）
+        const pointRadius = dates.map(date => taiexHighDates.has(date) ? 6 : 0);
+        const pointHoverRadius = dates.map(date => taiexHighDates.has(date) ? 8 : 3);
+
+        // 繪製圖表
+        renderChart(dates, closePrices, volumes, ma5, ma20, ma60, pointRadius, pointHoverRadius);
+
+    } catch (error) {
+        console.error(error);
+        alert('抓取資料失敗：' + error.message);
+    } finally {
+        loading.style.display = 'none';
+    }
+}
+
+function renderChart(labels, closePrices, volumes, ma5, ma20, ma60, pointRadius, pointHoverRadius) {
+    const ctx = document.getElementById('stockChart').getContext('2d');
+
+    if (myChart) {
+        myChart.destroy(); // 銷毀舊圖表
+    }
+
+    myChart = new Chart(ctx, {
+        type: 'bar', // 主類型設為 bar，供成交量使用
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    type: 'line',
+                    label: '收盤價 (Y1)',
+                    data: closePrices,
+                    borderColor: '#dc3545',
+                    borderWidth: 2,
+                    fill: false,
+                    yAxisID: 'y1',
+                    pointRadius: pointRadius, // 大盤創新高當天顯示圓圈
+                    pointBackgroundColor: '#ffc107',
+                    pointBorderColor: '#dc3545',
+                    pointBorderWidth: 2,
+                    pointHoverRadius: pointHoverRadius
+                },
+                {
+                    type: 'line',
+                    label: '5日均線 (MA5)',
+                    data: ma5,
+                    borderColor: '#0d6efd',
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false,
+                    yAxisID: 'y1'
+                },
+                {
+                    type: 'line',
+                    label: '20日均線 (MA20)',
+                    data: ma20,
+                    borderColor: '#198754',
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false,
+                    yAxisID: 'y1'
+                },
+                {
+                    type: 'line',
+                    label: '60日均線 (MA60)',
+                    data: ma60,
+                    borderColor: '#6f42c1',
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false,
+                    yAxisID: 'y1'
+                },
+                {
+                    type: 'bar',
+                    label: '成交量/張 (Y2)',
+                    data: volumes,
+                    backgroundColor: 'rgba(108, 117, 125, 0.4)',
+                    yAxisID: 'y2'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: { title: { display: true, text: '日期' } },
+                y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    title: { display: true, text: '股價 (TWD)' }
+                },
+                y2: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    grid: { drawOnChartArea: false }, // 不繪製重疊網格
+                    title: { display: true, text: '成交量 (張)' }
+                }
+            },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        afterBody: function(context) {
+                            const date = context[0].label;
+                            // 提醒使用者當天是否是大盤創新高日
+                            if (context[0].dataset.pointRadius && context[0].dataset.pointRadius[context[0].dataIndex] > 0) {
+                                return '\n★ 當日加權指數創歷史新高！';
+                            }
+                            return '';
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+</script>
+
+</body>
+</html>
